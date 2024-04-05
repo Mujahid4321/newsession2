@@ -6,88 +6,90 @@ from flask_cors import CORS
 from sqlalchemy.orm import sessionmaker
 import spacy
 import random
+import os
 from fuzzywuzzy import process, fuzz
 nlp = spacy.load("en_core_web_sm")
 
 
 app = Flask(__name__)
 CORS(app)
-
+# 25Define your SQLAlchemy model for intents
 Base = declarative_base()
-
-
-app = Flask(__name__)
-CORS(app)
-
-Base = declarative_base()
-
-
-app.config['SQLALCHEMY_DATABASE_USER'] = 'chikku_chatbot_data_user'
-app.config['SQLALCHEMY_DATABASE_PASSWORD'] = 'x07zIKvY9Zan4lRB3iSntvQgQD9fjVi6'
-app.config['SQLALCHEMY_DATABASE_HOST'] = 'dpg-cmqv2u21hbls73fm81tg-a.oregon-postgres.render.com'
-app.config['SQLALCHEMY_DATABASE_PORT'] = '5432'  # Assuming the default PostgreSQL port is used
-app.config['SQLALCHEMY_DATABASE_NAME'] = 'chikku_chatbot_data'
-
-# Construct the new URI
-app.config['SQLALCHEMY_DATABASE_URI'] = f"postgresql://{app.config['SQLALCHEMY_DATABASE_USER']}:{quote_plus(app.config['SQLALCHEMY_DATABASE_PASSWORD'])}@{app.config['SQLALCHEMY_DATABASE_HOST']}:{app.config['SQLALCHEMY_DATABASE_PORT']}/{app.config['SQLALCHEMY_DATABASE_NAME']}"
-
-
-
-# Replace the connection string with your actual PostgreSQL connection string
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
 
 class Intent(Base):
-    __tablename__ = 'chatbot_data'
-    # __table_args__ = {'schema': 'chikkuchatbot'}
+    __tablename__ = 'chatbotdata'
+    __table_args__ = {'schema': 'chikkuchatbot'}
     id = Column(Integer, primary_key=True)
     tag = Column(String(50), unique=True, nullable=False)
-    patterns = Column(ARRAY(String), nullable=False)
-    responses = Column(ARRAY(String), nullable=False)
+    question = Column(ARRAY(String), nullable=False)
+    answer = Column(ARRAY(String), nullable=False)
 
-# Create the 'chikkuchatbot' schema if it doesn't exist
-with app.app_context():
-    engine = create_engine(app.config['SQLALCHEMY_DATABASE_URI'])
-    Base.metadata.create_all(bind=engine)
+def get_options():
+    options = [
+        "Heartly welcome in chikku service,I am here to assist you ",
+        "Here are the some KEY WORDS you can type from the list:",
+
+        "1. Chikku",
+        "2. Booking",
+        "3. services",
+        "4. work",
+        "5. Safety",
+        "6. Request",
+        "7. quote",
+        "8. status",
+        "9. payment",
+        "10. contact Us",
+    ]
+    return options
+
+# Fetch the value of the DB_CREDENTIALS environment variable
+db_credentials = os.getenv('DB_CREDENTIALS')
+
+# Construct the database URL if credentials are provided
+if db_credentials:
+    db_user, db_password, db_host, db_port_str, db_name = db_credentials.split(';')
+    db_port = int(db_port_str) if db_port_str and db_port_str.isdigit() else None
+    db_url = f'postgresql://{db_user}:{quote_plus(db_password)}@{db_host}:{db_port}/{db_name}'
+
+
+    # Create the SQLAlchemy engine and session outside the app context
+    engine = create_engine(db_url)
+    Session = sessionmaker(bind=engine)
 
 # API endpoint for adding new intents
 @app.route('/api/intents', methods=['POST'])
 def add_intent():
-    # Extract data from the request
     data = request.get_json()
 
     tag = data.get('tag')
-    patterns = data.get('patterns')
-    responses = data.get('responses')
+    question = data.get('question')
+    answer = data.get('answer')
 
     # Validate data
-    if not tag or not patterns or not responses:
+    if not tag or not question or not answer:
         return jsonify({'error': 'Incomplete data provided'}), 400
 
     # Create a new intent
-    new_intent = Intent(tag=tag, patterns=patterns, responses=responses)
+    new_intent = Intent(tag=tag, question=question, answer=answer)
 
     # Add the new intent to the database
     with app.app_context():
-        Session = sessionmaker(bind=engine)
         session = Session()
-
         session.add(new_intent)
         session.commit()
 
     return jsonify({'message': 'Intent added successfully'})
 
-
+# API endpoint for fetching all intents from the database
 @app.route('/api/fetch', methods=['GET'])
 def get_intents():
     # Create a session within the application context
     with app.app_context():
-        Session = sessionmaker(bind=engine)
         session = Session()
 
         # Check if the 'Intent' table exists in the database
         inspector = inspect(engine)
-        table_exists = inspector.has_table("chatbot_data") #, schema="chikkuchatbot")
+        table_exists = inspector.has_table("chatbotdata", schema="chikkuchatbot")
 
         # Query data from the "chatbot_data" table if it exists
         if table_exists:
@@ -97,14 +99,15 @@ def get_intents():
                 intent_list.append({
                     'id': intent.id,
                     'tag': intent.tag,
-                    'patterns': intent.patterns,
-                    'responses': intent.responses
+                    'question': intent.question,
+                    'answer': intent.answer
                 })
         else:
             intent_list = []
 
     return jsonify({'intents': intent_list})
 
+# API endpoint for getting the database URL
 @app.route('/api/data/<int:intent_id>', methods=['DELETE'])
 def delete_intent(intent_id):
     # Create a session within the application context
@@ -124,6 +127,7 @@ def delete_intent(intent_id):
         session.commit()
 
     return jsonify({'message': f'Intent with ID {intent_id} deleted successfully'})
+
 
 
 @app.route('/api/ask', methods=['POST'])
@@ -148,7 +152,7 @@ def ask_question():
 
     for intent in intents:
         # Use fuzzy matching to find the similarity score
-        _, score = process.extractOne(question.lower(), intent.patterns, scorer=fuzz.ratio)
+        _, score = process.extractOne(question.lower(), intent.question, scorer=fuzz.ratio)
 
         # Update relevant_intent if a better match is found
         if score > max_score:
@@ -156,14 +160,85 @@ def ask_question():
             relevant_intent = intent
 
     # Respond based on the relevant intent
-    if relevant_intent and max_score >= 70:  # Adjust the threshold as needed
-        response =relevant_intent.responses
+
+    # Call the function
+    # Call the function
+
+    if relevant_intent and max_score >=70:  # Adjust the threshold as needed
+        response =relevant_intent.answer
     else:
-        response = "I'm sorry, I don't understand the question."
+        response =get_options()
 
     return jsonify({'response': response})
 
 
+@app.route('/api/intents/<tag>', methods=['GET', 'PUT'])
+def get_or_update_intent(tag):
+    # Create a session within the application context
+    with app.app_context():
+        Session = sessionmaker(bind=engine)
+        session = Session()
+
+        # Retrieve the intent by tag
+        existing_intent = session.query(Intent).filter_by(tag=tag).first()
+
+        # Check if the intent exists
+        if not existing_intent:
+            return jsonify({'error': 'Intent not found'}), 404
+
+        if request.method == 'GET':
+            # Return intent details
+            intent_details = {
+                'id': existing_intent.id,
+                'tag': existing_intent.tag,
+                'question': existing_intent.question,
+                'answer': existing_intent.answer
+            }
+            return jsonify({'intent': intent_details})
+
+        elif request.method == 'PUT':
+            # Extract data from the request
+            data = request.get_json()
+
+            new_question = data.get('new_question', [])
+            new_answer = data.get('new_answer', [])
+
+            # Validate data
+            if not new_question and not new_answer:
+                return jsonify({'error': 'Both new_question and new_answer are missing'}), 400
+
+            # Update question and answer
+            existing_intent.question = new_question
+            existing_intent.answer = new_answer
+
+            # Commit the changes
+            session.commit()
+
+            return jsonify({'message': f'Intent with tag {tag} updated successfully'})
+
+
+@app.route('/api/intents/<int:intent_id>', methods=['GET'])
+def get_or_update_intent_by_id(intent_id):
+    # Create a session within the application context
+    with app.app_context():
+        Session = sessionmaker(bind=engine)
+        session = Session()
+
+        # Retrieve the intent by ID
+        existing_intent = session.query(Intent).filter_by(id=intent_id).first()
+
+        # Check if the intent exists
+        if not existing_intent:
+            return jsonify({'error': 'Intent not found'}), 404
+
+        # Return intent details
+        intent_details = {
+            'id': existing_intent.id,
+            'tag': existing_intent.tag,
+            'question': existing_intent.question,
+            'answer': existing_intent.answer
+        }
+        return jsonify({'intent': intent_details})
 
 if __name__ == '__main__':
     app.run(debug=True)
